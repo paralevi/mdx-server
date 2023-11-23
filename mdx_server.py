@@ -1,28 +1,17 @@
 # -*- coding: utf-8 -*-
-# version: python 3.5
 
-import threading
-import re
-import os
 import sys
-
+import threading
 
 if sys.version_info < (3, 0, 0):
-    import Tkinter as tk
-    import tkFileDialog as filedialog
+    pass
 else:
-    import tkinter as tk
-    import tkinter.filedialog as filedialog
+    pass
 
 from wsgiref.simple_server import make_server
-from file_util import *
 from mdx_util import *
 from mdict_query import IndexBuilder
-
-"""
-browser URL:
-http://localhost:8000/test
-"""
+from loguru import logger
 
 content_type_map = {
     'html': 'text/html; charset=utf-8',
@@ -44,15 +33,9 @@ content_type_map = {
     'woff2': 'application/font-woff2',
 }
 
-try:
-    # PyInstaller creates a temp folder and stores path in _MEIPASS
-    #base_path = sys._MEIPASS
-    base_path = os.path.dirname(sys.executable)
-except Exception:
-    base_path = os.path.abspath(".")
-        
+base_path = os.path.dirname(os.path.abspath(__file__))
 resource_path = os.path.join(base_path, 'mdx')
-print("resouce path : " + resource_path)
+logger.info("resource_path: {}", resource_path)
 builder = None
 
 
@@ -71,12 +54,17 @@ def get_url_map():
 
 def application(environ, start_response):
     path_info = environ['PATH_INFO'].encode('iso8859-1').decode('utf-8')
-    print(path_info)
     m = re.match('/(.*)', path_info)
     word = ''
     if m is not None:
         word = m.groups()[0]
+    try:
+        return serve_content(path_info, start_response)
+    except EntryNotFoundError as e:
+        return [e.args[0].encode('utf-8')]
 
+
+def serve_content(path_info, start_response):
     url_map = get_url_map()
 
     if path_info in url_map:
@@ -92,35 +80,24 @@ def application(environ, start_response):
         start_response('200 OK', [('Content-Type', 'text/html; charset=utf-8')])
         return get_definition_mdx(path_info[1:], builder)
 
-
-    start_response('200 OK', [('Content-Type', 'text/html; charset=utf-8')])
-    return [b'<h1>WSGIServer ok!</h1>']
+    # start_response('200 OK', [('Content-Type', 'text/html; charset=utf-8')])
+    # return [b'<h1>WSGIServer ok!</h1>']
 
 
 # 新线程执行的代码
-def loop():
+def loop(port=8000):
     # 创建一个服务器，IP地址为空，端口是8000，处理函数是application:
-    httpd = make_server('', 8000, application)
-    print("Serving HTTP on port 8000...")
+    httpd = make_server('', port, application)
+    logger.info("Serving HTTP on port {}...", port)
     # 开始监听HTTP请求:
     httpd.serve_forever()
 
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("filename", nargs='?', help="mdx file name")
-    args = parser.parse_args()
+    from config import settings
 
-    # use GUI to select file, default to extract
-    if not args.filename:
-        root = tk.Tk()
-        root.withdraw()
-        args.filename = filedialog.askopenfilename(parent=root)
-
-    if not os.path.exists(args.filename):
-        print("Please specify a valid MDX/MDD file")
-    else:
-        builder = IndexBuilder(args.filename)
-        t = threading.Thread(target=loop, args=())
-        t.start()
+    mdx_file = os.path.join(settings.base_dir, settings.filename)
+    builder = IndexBuilder(mdx_file)
+    t = threading.Thread(target=loop, args=(settings.port,))
+    t.start()
+    t.join()
